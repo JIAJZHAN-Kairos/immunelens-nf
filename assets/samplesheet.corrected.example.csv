@@ -1,0 +1,3 @@
+sample,bam,genome,purity,TCRA_cn,TCRB_cn,TCRG_cn,IGH_cn
+SAMPLE_A,s3://my-bucket/data/SAMPLE_A_tumor.bam,hg38,0.5,3,3,3,3
+SAMPLE_B,s3://my-bucket/data/SAMPLE_B_tumor.bam,hg38,0.6,2,2,NA,2

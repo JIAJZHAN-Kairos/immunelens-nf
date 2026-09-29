@@ -1,20 +1,32 @@
 #!/usr/bin/env Rscript
 suppressPackageStartupMessages(library(ImmuneLENS))
 args <- commandArgs(trailingOnly = TRUE)
-stopifnot(length(args) == 2L)
+stopifnot(length(args) %in% c(2L, 3L))
 sample <- args[[1]]
 coverage_dir <- args[[2]]
 metadata <- jsonlite::fromJSON(file.path(coverage_dir, 'sample.json'))
+corrections <- if (length(args) == 3L) jsonlite::fromJSON(args[[3]]) else list()
+if (length(corrections) && corrections$genome != metadata$genome) {
+    stop('Manifest CN genome differs from the BAM genome.', call. = FALSE)
+}
 output_dir <- paste0(sample, '.immunelens')
 dir.create(output_dir)
 summaries <- list()
 estimates <- list()
 
 for (locus in c('TCRA', 'TCRB', 'TCRG', 'IGH')) {
+    purity <- if (is.null(corrections$purity)) NA_real_ else corrections$purity
+    local_cn <- corrections[[paste0(locus, '_cn')]]
+    if (is.null(local_cn)) local_cn <- NA_real_
+    cn_status <- corrections[[paste0(locus, '_cn_status')]]
+    if (is.null(cn_status)) cn_status <- if (is.finite(local_cn)) 'user_supplied' else 'not_supplied'
+    can_adjust <- is.finite(purity) && is.finite(local_cn)
+    correction <- if (can_adjust) 'purity_local_cn' else 'unadjusted'
     status <- 'ok'
     note <- ''
     fit <- NULL
-    fraction <- NA_real_
+    fraction <- raw_fraction <- adjusted_fraction <- NA_real_
+    high_fraction <- NA
     if (metadata$genome == 'hg19' && locus == 'IGH') {
         status <- 'unsupported_genome'
         note <- 'Upstream IGH analysis supports hg38 only.'
@@ -42,14 +54,26 @@ for (locus in c('TCRA', 'TCRB', 'TCRG', 'IGH')) {
                 status <- 'no_estimate'
                 note <- 'The upstream model did not return a finite cell-fraction estimate.'
             } else {
-                fraction <- fit[[1]][[column]][[1]]
+                raw_fraction <- fit[[1]][[column]][[1]]
+                if (can_adjust) {
+                    saveRDS(fit, file.path(output_dir, paste0(locus, '.raw.rds')))
+                    fit <- lapply(fit, function(output) adjustImmuneLENS(output,
+                        purity = purity, local.cn = local_cn, vdj.gene = locus))
+                    adjusted_fraction <- fit[[1]][[paste0(column, '.adj')]][[1]]
+                    high_fraction <- fit[[1]]$highTcellFlag[[1]]
+                    if (!is.finite(adjusted_fraction)) stop('Non-finite adjusted fraction.', call. = FALSE)
+                }
+                fraction <- if (can_adjust) adjusted_fraction else raw_fraction
                 if (fraction < 0 || fraction > 1) {
                     status <- 'out_of_range'
-                    note <- 'Raw upstream fraction is outside [0,1]; inspect local copy number and model fit.'
+                    note <- 'Estimated fraction is outside [0,1]; inspect local copy number and model fit.'
+                } else if (isTRUE(high_fraction)) {
+                    status <- 'high_cell_fraction'
+                    note <- 'Adjusted fraction exceeds the non-tumour fraction (1-purity).'
                 }
                 fit[[1]]$locus <- locus
                 fit[[1]]$genome <- metadata$genome
-                fit[[1]]$correction <- 'unadjusted'
+                fit[[1]]$correction <- correction
                 summaries[[locus]] <- fit[[1]]
                 saveRDS(fit, file.path(output_dir, paste0(locus, '.rds')))
                 write.table(fit[[2]], file.path(output_dir, paste0(locus, '.segments.tsv')),
@@ -59,11 +83,17 @@ for (locus in c('TCRA', 'TCRB', 'TCRG', 'IGH')) {
             }
         }
     }
+    if (length(corrections) && !can_adjust) {
+        note <- paste(note, 'Purity/local-CN adjustment skipped:', cn_status)
+    }
     if (locus == 'IGH') {
-        note <- paste(note, 'Tumour-only IGH: no matched-normal haplotype or somatic-CNA correction applied.')
+        note <- paste(note, 'IGH matched-normal germline/within-locus somatic correction not applied.')
     }
     estimates[[locus]] <- data.frame(sample, locus, genome = metadata$genome, status,
-        cell_fraction = fraction, correction = 'unadjusted', message = trimws(note))
+        cell_fraction = fraction, raw_cell_fraction = raw_fraction,
+        adjusted_cell_fraction = adjusted_fraction, purity = purity, local_cn = local_cn,
+        cn_status = cn_status, high_cell_fraction_flag = high_fraction,
+        correction = correction, message = trimws(note))
     message(sample, ' ', locus, ': ', status)
 }
 write.table(do.call(rbind, estimates), file.path(output_dir, 'estimates.tsv'),
@@ -73,4 +103,5 @@ if (length(summaries)) {
         sep = '\t', quote = FALSE, row.names = FALSE, na = 'NA')
 }
 file.copy(file.path(coverage_dir, 'sample.json'), file.path(output_dir, 'sample.json'))
+if (length(args) == 3L) file.copy(args[[3]], file.path(output_dir, 'corrections.json'))
 writeLines(capture.output(sessionInfo()), file.path(output_dir, 'sessionInfo.txt'))

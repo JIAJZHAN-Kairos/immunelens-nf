@@ -33,11 +33,11 @@ process EXTRACT_COVERAGE {
     publishDir "${params.outdir}/coverage", mode: 'copy'
 
     input:
-    tuple val(sample), val(bam), path(local_inputs)
+    tuple val(sample), val(bam), path(local_inputs), val(corrections)
     path regions
 
     output:
-    tuple val(sample), path("${sample}.coverage")
+    tuple val(sample), path("${sample}.coverage"), val(corrections)
 
     script:
     def source = local_inputs ? local_inputs.find { it.name.endsWith('.bam') }.toString() : bam
@@ -57,7 +57,7 @@ process FIT_IMMUNELENS {
     publishDir "${params.outdir}/samples", mode: 'copy'
 
     input:
-    tuple val(sample), path(coverage)
+    tuple val(sample), path(coverage), val(corrections)
     path library
 
     output:
@@ -67,7 +67,10 @@ process FIT_IMMUNELENS {
     """
     tar -xzf ${quoteArg(library)}
     export R_LIBS_USER="\$PWD/immunelens-library"
-    run_immunelens.R ${quoteArg(sample)} ${quoteArg(coverage)}
+    cat > corrections.json <<'IMMUNELENS_CORRECTIONS'
+    ${groovy.json.JsonOutput.toJson(corrections)}
+    IMMUNELENS_CORRECTIONS
+    run_immunelens.R ${quoteArg(sample)} ${quoteArg(coverage)} corrections.json
     """
 
     stub:
@@ -142,7 +145,32 @@ workflow {
                 }
                 if (!names.add(sample)) error "Duplicate sample ID: ${sample}."
                 if (!bams.add(bam)) error "Duplicate BAM path for sample ${sample}."
-                tuple(sample, bam, local_inputs)
+                def corrections = [:]
+                def cnColumns = ['TCRA_cn', 'TCRB_cn', 'TCRG_cn', 'IGH_cn']
+                if (row.containsKey('purity') || cnColumns.any { row.containsKey(it) }) {
+                    def required = ['purity', 'genome'] + cnColumns
+                    if (!required.every { row.containsKey(it) }) {
+                        error "Sample ${sample}: correction requires purity,genome,TCRA_cn,TCRB_cn,TCRG_cn,IGH_cn columns."
+                    }
+                    if (!(row.genome in ['hg19', 'hg38'])) error "Sample ${sample}: genome must be hg19 or hg38."
+                    corrections.genome = row.genome
+                    required.findAll { it != 'genome' }.each { column ->
+                        def text = row[column]?.trim()
+                        if (column != 'purity' && text in ['', 'NA']) {
+                            corrections[column] = null
+                        } else {
+                            def number
+                            try { number = Double.parseDouble(text ?: '') }
+                            catch (Exception ignored) { error "Sample ${sample}: invalid ${column}: ${text}." }
+                            if (!Double.isFinite(number) || number < 0 || (column == 'purity' && number > 1)) {
+                                error "Sample ${sample}: ${column} must be finite and nonnegative; purity must be within [0,1]."
+                            }
+                            corrections[column] = number
+                        }
+                    }
+                    cnColumns.each { column -> corrections[column + '_status'] = row[column + '_status'] ?: 'user_supplied' }
+                }
+                tuple(sample, bam, local_inputs, corrections)
             }
         }
         PREPARE_IMMUNELENS(samples.map { it.size() })

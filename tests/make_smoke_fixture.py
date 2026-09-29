@@ -21,4 +21,6 @@ for sample in ('EMPTY', 'LOWCOV'):
     bam = output / (sample + '.bam')
     subprocess.run(['samtools', 'view', '-b', '-o', str(bam), str(sam)], check=True)
     subprocess.run(['samtools', 'index', str(bam)], check=True)
-(output / 'samplesheet.csv').write_text('sample,bam\n' + ''.join(f'{s},{output / (s + ".bam")}\n' for s in ('EMPTY', 'LOWCOV')))
+(output / 'samplesheet.csv').write_text('sample,bam,genome,purity,TCRA_cn,TCRB_cn,TCRG_cn,IGH_cn\n' +
+    ''.join(f'{s},{output / (s + ".bam")},hg38,0.5,3,3,{"NA" if s == "LOWCOV" else 3},3\n'
+            for s in ('EMPTY', 'LOWCOV')))

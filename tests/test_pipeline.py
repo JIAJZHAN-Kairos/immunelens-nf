@@ -21,6 +21,56 @@ def load_module(name):
 
 extract = load_module('extract_coverage')
 gather = load_module('summarise_cohort')
+prepare = load_module('prepare_manifest')
+
+
+class ManifestTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.work = Path(self.temp.name)
+        self.manifest = self.work / 'manifest.csv'
+        self.manifest.write_text('sample,bam\nB,s3://bucket/B.bam\nA,s3://bucket/A.bam\n')
+        self.output = self.work / 'immunelens.csv'
+        for sample in ('A', 'B'):
+            (self.work / (sample + '.purple.purity.tsv')).write_text('purity\tstatus\n0.5\tNORMAL\n')
+            self.write_cn(sample)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def write_cn(self, sample, heterogeneous=False):
+        text = 'chromosome\tstart\tend\tgene\tisCanonical\tminCopyNumber\tmaxCopyNumber\n'
+        for symbol, chromosome, start, end in prepare.PROXIES.values():
+            high = 5 if heterogeneous and symbol == 'OR10G3' else 3
+            text += f'chr{chromosome}\t{start}\t{end}\t{symbol}\ttrue\t3\t{high}\n'
+        (self.work / (sample + '.purple.cnv.gene.tsv')).write_text(text)
+
+    def test_proxy_cn_and_purity_preserve_source_and_sample_order(self):
+        original = self.manifest.read_bytes()
+        qc = prepare.prepare(self.manifest, self.work, self.work, self.output)
+        with self.output.open() as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual([r['sample'] for r in rows], ['B', 'A'])
+        self.assertEqual(self.manifest.read_bytes(), original)
+        self.assertEqual(qc['samples_with_all_four_cn'], 2)
+        self.assertTrue(all(r['purity'] == '0.5' and r['IGH_cn'] == '3' for r in rows))
+
+    def test_heterogeneous_proxy_is_na_without_dropping_the_sample(self):
+        self.write_cn('B', heterogeneous=True)
+        qc = prepare.prepare(self.manifest, self.work, self.work, self.output)
+        with self.output.open() as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['TCRA_cn'], 'NA')
+        self.assertEqual(rows[0]['TCRA_cn_status'], 'proxy_gene_heterogeneous')
+        self.assertEqual(rows[0]['TCRB_cn'], '3')
+        self.assertEqual(qc['samples_with_all_four_cn'], 1)
+
+    def test_no_tumor_cannot_be_silently_reintroduced(self):
+        (self.work / 'B.purple.purity.tsv').write_text('purity\tstatus\n0.08\tNO_TUMOR\n')
+        with self.assertRaisesRegex(ValueError, 'NO_TUMOR'):
+            prepare.prepare(self.manifest, self.work, self.work, self.output)
+        self.assertFalse(self.output.exists())
 
 
 class GenomeTests(unittest.TestCase):
@@ -116,6 +166,29 @@ class CohortTests(unittest.TestCase):
             handle.write(path.read_text().splitlines()[1] + '\n')
         with self.assertRaisesRegex(ValueError, 'Duplicate estimate'):
             gather.summarise(self.manifest, self.results)
+
+    def test_mixed_corrections_keep_raw_and_adjusted_columns(self):
+        path = self.results / 'A.immunelens' / 'estimates.tsv'
+        with path.open() as handle:
+            rows = list(csv.DictReader(handle, delimiter='\t'))
+        for row in rows:
+            row.update(raw_cell_fraction='NA', adjusted_cell_fraction='NA', purity='0.5',
+                       local_cn='NA', cn_status='proxy_gene_heterogeneous', high_cell_fraction_flag='NA')
+        rows[0].update(cell_fraction='0.25', raw_cell_fraction='0.2', adjusted_cell_fraction='0.25',
+                       correction='purity_local_cn', local_cn='3', cn_status='proxy_gene_uniform', status='ok')
+        with path.open('w') as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0]), delimiter='\t')
+            writer.writeheader()
+            writer.writerows(rows)
+        gather.summarise(self.manifest, self.results)
+        with open('cohort_estimates_wide.tsv') as handle:
+            wide = list(csv.DictReader(handle, delimiter='\t'))
+        self.assertEqual(wide[1]['correction'], 'mixed')
+        self.assertEqual(wide[1]['TCRA_raw_fraction'], '0.2')
+        self.assertEqual(wide[1]['TCRA_adjusted_fraction'], '0.25')
+        self.assertEqual(wide[1]['TCRB_adjusted_fraction'], 'NA')
+        self.assertEqual(json.loads(Path('cohort_qc.json').read_text())['correction_counts'],
+                         {'unadjusted': 7, 'purity_local_cn': 1})
 
 
 if __name__ == '__main__':

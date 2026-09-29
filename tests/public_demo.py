@@ -8,6 +8,7 @@ import subprocess
 import sys
 import urllib.request
 import csv
+import math
 
 root = Path(__file__).resolve().parents[1]
 destination = Path(sys.argv[1]).resolve()
@@ -36,11 +37,27 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
     counts = dict(pool.map(fetch, files.items()))
 (coverage / 'sample.json').write_text(json.dumps({'sample': 'DEMO', 'genome': 'hg38',
     'coverage_positions': counts, 'correction': 'unadjusted', 'source': 'Zenodo 11094087 upstream tutorial'}))
-subprocess.run([str(root / 'bin/run_immunelens.R'), 'DEMO', str(coverage)], cwd=destination, check=True)
+corrections = destination / 'corrections.json'
+corrections.write_text(json.dumps({'genome': 'hg38', 'purity': 0.9,
+    'TCRA_cn': 3, 'TCRB_cn': 3, 'TCRG_cn': None, 'IGH_cn': 3,
+    'TCRG_cn_status': 'proxy_gene_heterogeneous'}))
+subprocess.run([str(root / 'bin/run_immunelens.R'), 'DEMO', str(coverage), str(corrections)],
+               cwd=destination, check=True)
 with (destination / 'DEMO.immunelens/estimates.tsv').open() as handle:
     rows = list(csv.DictReader(handle, delimiter='\t'))
 assert len(rows) == 4
-assert all(row['status'] == 'ok' for row in rows), rows
+assert all(row['status'] in ('ok', 'high_cell_fraction') for row in rows), rows
 assert all(0 <= float(row['cell_fraction']) <= 1 for row in rows), rows
-assert all(row['correction'] == 'unadjusted' for row in rows)
+for row in rows:
+    raw = float(row['raw_cell_fraction'])
+    if row['locus'] == 'TCRG':
+        assert row['correction'] == 'unadjusted'
+        assert row['adjusted_cell_fraction'] == 'NA'
+        assert float(row['cell_fraction']) == raw
+        assert row['cn_status'] == 'proxy_gene_heterogeneous'
+    else:
+        assert row['correction'] == 'purity_local_cn'
+        assert math.isclose(float(row['adjusted_cell_fraction']), raw * 1.45, abs_tol=1e-10)
+        assert row['cell_fraction'] == row['adjusted_cell_fraction']
+        assert row['high_cell_fraction_flag'] == 'TRUE'
 print(json.dumps(rows, indent=2))

@@ -72,6 +72,7 @@ jobs:
           assert qc['manifest_samples'] == 2
           assert qc['sample_locus_rows'] == 8
           assert qc['stub_run'] is False
+          assert qc['correction_counts'] == {'purity_local_cn': 7, 'unadjusted': 1}
           with open('test-results/cohort_estimates.tsv') as handle:
               rows = list(csv.DictReader(handle, delimiter='\t'))
           assert all(row['status'] == 'no_coverage' for row in rows if row['sample'] == 'EMPTY')

@@ -7,7 +7,7 @@ Seqera Platform with AWS Batch; local execution with Docker is also supported.
 ## Seqera launch
 
 1. Add pipeline: `https://github.com/JIAJZHAN-Kairos/immunelens-nf`.
-2. Select revision `v1.0.1` and profile `seqera`.
+2. Select revision `v1.1.0` and profile `seqera`.
 3. Select an existing Linux x86-64 AWS Batch compute environment with access to the BAM
    bucket and the manifest/output bucket. Its configuration supplies the queue,
    executor, work directory and AWS job role.
@@ -52,10 +52,42 @@ SAMPLE_B,s3://my-bucket/data/SAMPLE_B_tumor.bam
 
 `sample` and `bam` are required and must be unique. IDs may contain letters,
 digits, underscores, hyphens and dots, starting with a letter or digit.
-Other columns are ignored. All manifest rows are retained in the original
+Metadata columns other than the correction fields below are ignored.
+All manifest rows are retained in the original
 order. BAMs must be indexed and suitable for coordinate-based queries.
 Indexes are discovered automatically as `file.bam.bai`, `file.bai`,
 `file.bam.csi` or `file.csi` beside each BAM.
+
+To apply purity/local-CN adjustment, include these additional columns in the
+same manifest:
+
+```csv
+sample,bam,genome,purity,TCRA_cn,TCRB_cn,TCRG_cn,IGH_cn
+SAMPLE_A,s3://my-bucket/data/SAMPLE_A_tumor.bam,hg38,0.5,3,3,3,3
+SAMPLE_B,s3://my-bucket/data/SAMPLE_B_tumor.bam,hg38,0.6,2,2,NA,2
+```
+
+`purity` is a fraction within [0,1]. Each `*_cn` is absolute tumour copy
+number for that locus, not global ploidy or a log ratio. CN values can be
+noninteger and must be nonnegative. `genome` must match the detected BAM
+build. `NA` or an empty CN skips adjustment for that locus and retains its
+raw estimate. Optional `*_cn_status` columns explain missing or reviewed CNs.
+The original two-column manifest remains supported for unadjusted analysis.
+
+The publication uses nearby-gene CN proxies: TCRA—OR10G3, TCRB—PRSS58,
+TCRG—STARD3NL and IGH—TMEM121. The preparation helper uses the same proxies
+with PURPLE canonical gene CN calls and preserves the original sample order:
+
+```bash
+python3 bin/prepare_manifest.py --input samplesheet.csv \
+  --purity-dir /path/to/purple_purity --gene-cn-dir /path/to/purple_cnv_gene \
+  --output samplesheet.immunelens.csv
+```
+
+It creates a separate manifest, a per-locus source/checksum audit and a QC
+JSON. `NO_TUMOR` inputs are rejected. Where a proxy gene's minimum and maximum
+CN disagree, its CN is recorded as `NA` with `proxy_gene_heterogeneous` status;
+no arbitrary average is used. The helper validates the hg38 gene annotation.
 
 ## Analysis
 
@@ -75,15 +107,19 @@ Indexes are discovered automatically as `file.bam.bai`, `file.bai`,
    exon removal, including the default median coverage threshold of 15.
 6. Export fractions, locus-specific segment usage, model fit, Shannon diversity
    and IGH class-switch metrics as provided by the upstream model.
+   When correction columns are supplied, apply upstream `adjustImmuneLENS`
+   to the summary, segment and model tables. Both raw and adjusted fractions
+   are exported. Fractions exceeding [0,1] or the non-tumour fraction
+   (`1-purity`) receive explicit QC status and are not clipped.
 7. Gather exactly four locus records for every manifest sample. Missing or
    duplicate records fail the gather step. Low-coverage/no-estimate records are
    retained with `NA` fractions and explicit status; unexpected model failures
    fail the task rather than being silently converted into missing data.
 
-This two-column manifest produces **unadjusted DNA-based estimates**.
-It does not supply tumour purity, local copy number or matched-normal coverage.
-The pipeline therefore does not apply `adjustImmuneLENS` or IGH germline/somatic
-haplotype/CNA correction. Tumour-only IGH estimates and class-switch metrics
+The two-column manifest produces **unadjusted DNA-based estimates**.
+The enriched manifest supplies purity and local CN for adjustment. Neither
+format supplies matched-normal coverage for IGH germline/within-locus somatic
+haplotype correction. Tumour-only IGH estimates and class-switch metrics
 require particular caution at this polymorphic, copy-number-sensitive locus.
 The three T-cell locus estimates are kept separate; no arbitrary consensus
 fraction or immune hot/cold label is created. These estimates do not measure
@@ -103,13 +139,19 @@ immune function or spatial localization.
   samples/<sample>.immunelens/
     estimates.tsv, upstream_summaries.tsv
     <locus>.rds, <locus>.segments.tsv, <locus>.model.tsv
-    sample.json, sessionInfo.txt
+    <locus>.raw.rds             # original model when adjustment is applied
+    sample.json, corrections.json, sessionInfo.txt
   pipeline_info/
     software_versions.txt, report.html, timeline.html, trace.tsv
 ```
 
 Model files are present only when the upstream model returns an estimate.
 IGH coverage is absent for hg19 and its status is `unsupported_genome`.
+`cell_fraction` contains the adjusted estimate when valid correction inputs
+are present, otherwise the raw estimate. `raw_cell_fraction` and
+`adjusted_cell_fraction` are kept separately; inspect each locus's
+`correction`, `cn_status` and `high_cell_fraction_flag`. The wide table has
+matching per-locus columns and the cohort QC JSON records correction counts.
 An execution success can include biological QC failures: inspect
 `cohort_qc.json` and locus statuses before downstream analysis.
 
