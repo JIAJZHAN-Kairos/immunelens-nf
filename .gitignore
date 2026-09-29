@@ -1,0 +1,10 @@
+.nextflow*
+work/
+results/
+test-results/
+.runtime-smoke/
+__pycache__/
+*.pyc
+*.log
+samplesheet.csv
+!assets/samplesheet.example.csv

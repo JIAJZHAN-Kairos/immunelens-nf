@@ -1,0 +1,79 @@
+name: Validate pipeline
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wiring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: nf-core/setup-nextflow@v2
+        with:
+          version: '24.10.5'
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Workflow wiring with original manifest basename
+        run: |
+          cp assets/samplesheet.example.csv /tmp/samplesheet.csv
+          nextflow run . --input /tmp/samplesheet.csv --outdir test-results -stub-run -ansi-log false
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          qc = json.loads(Path('test-results/cohort_qc.json').read_text())
+          assert qc['manifest_samples'] == 2
+          assert qc['sample_locus_rows'] == 8
+          assert qc['stub_run'] is True
+          PY
+
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: nf-core/setup-nextflow@v2
+        with:
+          version: '24.10.5'
+      - name: Verify container, installation and indexed BAM extraction
+        run: |
+          docker run --rm -v "$PWD:/pipeline" -w /pipeline \
+            community.wave.seqera.io/library/r-base_samtools_awscli_python_pruned@sha256:b0bf56a001057922cea8f352bb6ec91d6891660515212f089e9683bc65f5115e \
+            bash -euo pipefail -c '
+              python3 -m unittest discover -s tests -v
+              mkdir -p /tmp/software-check
+              cd /tmp/software-check
+              /pipeline/bin/prepare_immunelens.sh
+              export R_LIBS_USER="$PWD/immunelens-library"
+              Rscript -e '\''library(ImmuneLENS); stopifnot(packageVersion("ImmuneLENS") == "1.0.3"); stopifnot(requireNamespace("jsonlite")); cat("Runtime verified\n")'\''
+              python3 /pipeline/tests/make_smoke_fixture.py regions.tsv /pipeline/.runtime-smoke
+              python3 /pipeline/tests/public_demo.py /tmp/public-demo
+            '
+      - name: Real Nextflow Docker execution
+        run: |
+          nextflow run . -profile docker --input "$PWD/.runtime-smoke/samplesheet.csv" \
+            --outdir test-results -ansi-log false
+          python3 - <<'PY'
+          import csv, json
+          from pathlib import Path
+          qc = json.loads(Path('test-results/cohort_qc.json').read_text())
+          assert qc['manifest_samples'] == 2
+          assert qc['sample_locus_rows'] == 8
+          assert qc['stub_run'] is False
+          with open('test-results/cohort_estimates.tsv') as handle:
+              rows = list(csv.DictReader(handle, delimiter='\t'))
+          assert all(row['status'] == 'no_coverage' for row in rows if row['sample'] == 'EMPTY')
+          assert all(row['cell_fraction'] == 'NA' for row in rows)
+          PY

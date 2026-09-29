@@ -1,0 +1,41 @@
+{
+  "containerPlatform": "linux/amd64",
+  "freeze": true,
+  "packages": {
+    "type": "CONDA",
+    "entries": [
+      "r-base=4.4.3",
+      "samtools=1.23",
+      "awscli",
+      "python=3.12",
+      "r-dplyr",
+      "r-tidyr",
+      "r-ggnewscale",
+      "r-readr",
+      "r-zoo",
+      "r-seqinr",
+      "r-rlang",
+      "r-mgcv",
+      "r-ggplot2",
+      "r-magrittr",
+      "r-tibble",
+      "r-data.table",
+      "r-quadprog",
+      "r-ggpubr",
+      "r-rpart",
+      "r-lavaan",
+      "r-future",
+      "r-future.apply",
+      "r-progressr",
+      "r-mvtnorm",
+      "r-norm",
+      "r-tmvtnorm",
+      "curl",
+      "procps-ng"
+    ],
+    "channels": [
+      "conda-forge",
+      "bioconda"
+    ]
+  }
+}

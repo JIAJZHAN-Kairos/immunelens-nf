@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "$id": "https://raw.githubusercontent.com/JIAJZHAN-Kairos/immunelens-nf/main/nextflow_schema.json",
+  "title": "ImmuneLENS Nextflow parameters",
+  "description": "Only the sample,bam CSV manifest is required. Genome and output location are automatic.",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "string",
+      "format": "file-path",
+      "mimetype": "text/csv",
+      "pattern": "^.+\\.csv$",
+      "title": "Input manifest",
+      "description": "CSV with sample,bam columns. A local path or s3:// URI is accepted."
+    },
+    "outdir": {
+      "type": "string",
+      "format": "directory-path",
+      "title": "Output directory (optional)",
+      "description": "Defaults to <S3 manifest parent>/results/immunelens-<UTC timestamp>, or ./results for a local manifest."
+    },
+    "container": {
+      "type": "string",
+      "hidden": true,
+      "default": "community.wave.seqera.io/library/r-base_samtools_awscli_python_pruned@sha256:b0bf56a001057922cea8f352bb6ec91d6891660515212f089e9683bc65f5115e"
+    },
+    "help": {
+      "type": "boolean",
+      "hidden": true,
+      "default": false
+    }
+  },
+  "required": ["input"]
+}
