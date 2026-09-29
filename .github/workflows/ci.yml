@@ -61,9 +61,9 @@ jobs:
               python3 /pipeline/tests/make_smoke_fixture.py regions.tsv "$IMMUNELENS_CI_ROOT/.runtime-smoke"
               python3 /pipeline/tests/public_demo.py /tmp/public-demo
             '
-      - name: Real Nextflow Docker execution
+      - name: Real Nextflow Docker execution with Fusion and Wave disabled
         run: |
-          nextflow run . -profile docker --input "$PWD/.runtime-smoke/samplesheet.csv" \
+          nextflow run . -profile docker,seqera --input "$PWD/.runtime-smoke/samplesheet.csv" \
             --outdir test-results -ansi-log false
           python3 - <<'PY'
           import csv, json

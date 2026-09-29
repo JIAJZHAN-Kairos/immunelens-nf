@@ -7,7 +7,7 @@ Seqera Platform with AWS Batch; local execution with Docker is also supported.
 ## Seqera launch
 
 1. Add pipeline: `https://github.com/JIAJZHAN-Kairos/immunelens-nf`.
-2. Select revision `v1.0.0` and profile `seqera`.
+2. Select revision `v1.0.1` and profile `seqera`.
 3. Select an existing Linux x86-64 AWS Batch compute environment with access to the BAM
    bucket and the manifest/output bucket. Its configuration supplies the queue,
    executor, work directory and AWS job role.
@@ -34,6 +34,13 @@ and the manifest, and the usual Nextflow read/write permissions on work and
 output locations. Worker containers also need HTTPS access to GitHub, CRAN,
 S3 and the public container registry. No AWS credentials are stored in this
 repository. The default AWS region is `ap-southeast-2`.
+
+**Fusion is not required.** The `seqera` profile explicitly disables Fusion
+and runtime Wave. AWS Batch runs the fixed Docker image and Nextflow uses
+ordinary S3 transfers for task inputs and outputs. BAMs are queried over HTTPS
+after downloading their indexes, without a Fusion mount. The image hostname
+`community.wave.seqera.io` is a public container registry; pulling this frozen
+image does not require enabling Wave or Fusion in Seqera.
 
 ## Manifest
 
