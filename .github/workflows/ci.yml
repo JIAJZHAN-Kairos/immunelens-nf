@@ -49,7 +49,7 @@ jobs:
           version: '24.10.5'
       - name: Verify container, installation and indexed BAM extraction
         run: |
-          docker run --rm -v "$PWD:/pipeline" -w /pipeline \
+          docker run --rm -v "$PWD:/pipeline" -v "$PWD:$PWD" -e IMMUNELENS_CI_ROOT="$PWD" -w /pipeline \
             community.wave.seqera.io/library/r-base_samtools_awscli_python_pruned@sha256:b0bf56a001057922cea8f352bb6ec91d6891660515212f089e9683bc65f5115e \
             bash -euo pipefail -c '
               python3 -m unittest discover -s tests -v
@@ -58,7 +58,7 @@ jobs:
               /pipeline/bin/prepare_immunelens.sh
               export R_LIBS_USER="$PWD/immunelens-library"
               Rscript -e '\''library(ImmuneLENS); stopifnot(packageVersion("ImmuneLENS") == "1.0.3"); stopifnot(requireNamespace("jsonlite")); cat("Runtime verified\n")'\''
-              python3 /pipeline/tests/make_smoke_fixture.py regions.tsv /pipeline/.runtime-smoke
+              python3 /pipeline/tests/make_smoke_fixture.py regions.tsv "$IMMUNELENS_CI_ROOT/.runtime-smoke"
               python3 /pipeline/tests/public_demo.py /tmp/public-demo
             '
       - name: Real Nextflow Docker execution
