@@ -29,7 +29,7 @@ process PREPARE_IMMUNELENS {
 }
 
 process EXTRACT_COVERAGE {
-    tag sample
+    tag { sample }
     publishDir "${params.outdir}/coverage", mode: 'copy'
 
     input:
@@ -53,7 +53,7 @@ process EXTRACT_COVERAGE {
 }
 
 process FIT_IMMUNELENS {
-    tag sample
+    tag { sample }
     publishDir "${params.outdir}/samples", mode: 'copy'
 
     input:
