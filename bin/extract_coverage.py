@@ -35,7 +35,9 @@ def bam_source(bam, index_prefix='input'):
                 break
         if index is None:
             raise RuntimeError(f'No accessible BAI/CSI index for {bam}; an index is required.')
-        local_index = Path(index_prefix + Path(index).suffix)
+        index_dir = Path('remote_indexes')
+        index_dir.mkdir(exist_ok=True)
+        local_index = index_dir / (index_prefix + Path(index).suffix)
         run(['aws', 's3', 'cp', index, str(local_index), '--only-show-errors'], stdout=subprocess.PIPE)
         url = run(['aws', 's3', 'presign', bam, '--expires-in', '43200'], stdout=subprocess.PIPE)
         return url.stdout.decode().strip(), local_index, index
