@@ -121,6 +121,24 @@ class CoverageTests(unittest.TestCase):
             metadata = json.loads((output / 'sample.json').read_text())
             self.assertEqual(metadata['coverage_positions']['TCRA'], 0)
             self.assertEqual(metadata['genome'], 'hg38')
+            subprocess.run(['python3', str(ROOT / 'bin/extract_coverage.py'), '--sample', 'NORMAL',
+                            '--bam', str(bam), '--regions', str(regions), '--locus', 'IGH'], cwd=work, check=True)
+            normal = work / 'NORMAL.coverage'
+            self.assertFalse((normal / 'TCRB.txt.gz').exists())
+            self.assertEqual(json.loads((normal / 'sample.json').read_text())['coverage_positions'], {'IGH': 0})
+
+
+@unittest.skipUnless(shutil.which('Rscript'), 'Rscript required for correction selection test')
+class IGHSelectionTests(unittest.TestCase):
+    def test_combined_requires_qc_and_strictly_lower_fraction(self):
+        source = json.dumps(str(ROOT / 'bin/correct_igh.R'))
+        subprocess.run(['Rscript', '-e', f'''source({source})
+            stopifnot(select_igh_correction(0.2, 0.1, TRUE))
+            stopifnot(!select_igh_correction(0.2, 0.1, FALSE))
+            stopifnot(!select_igh_correction(0.2, 0.2, TRUE))
+            stopifnot(!select_igh_correction(0.2, 0.3, TRUE))
+            stopifnot(!select_igh_correction(0.2, NA_real_, TRUE))
+        '''], check=True)
 
 
 class CohortTests(unittest.TestCase):

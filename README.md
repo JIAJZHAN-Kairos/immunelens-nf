@@ -7,7 +7,7 @@ Seqera Platform with AWS Batch; local execution with Docker is also supported.
 ## Seqera launch
 
 1. Add pipeline: `https://github.com/JIAJZHAN-Kairos/immunelens-nf`.
-2. Select revision `v1.1.0` and profile `seqera`.
+2. Select revision `v1.2.0` and profile `seqera`.
 3. Select an existing Linux x86-64 AWS Batch compute environment with access to the BAM
    bucket and the manifest/output bucket. Its configuration supplies the queue,
    executor, work directory and AWS job role.
@@ -52,7 +52,12 @@ SAMPLE_B,s3://my-bucket/data/SAMPLE_B_tumor.bam
 
 `sample` and `bam` are required and must be unique. IDs may contain letters,
 digits, underscores, hyphens and dots, starting with a letter or digit.
-Metadata columns other than the correction fields below are ignored.
+`bam` is the tumour BAM. An optional `normal_bam` supplies its matched germline
+BAM for IGH locus CNV correction. Empty/`NA` means not supplied. Tumour and normal
+BAMs must differ and have the same genome build. A normal may be shared across
+multiple tumour samples from the same patient; pairing must be established
+before creating the manifest. Metadata columns other than these and the
+correction fields below are ignored.
 All manifest rows are retained in the original
 order. BAMs must be indexed and suitable for coordinate-based queries.
 Indexes are discovered automatically as `file.bam.bai`, `file.bai`,
@@ -62,9 +67,9 @@ To apply purity/local-CN adjustment, include these additional columns in the
 same manifest:
 
 ```csv
-sample,bam,genome,purity,TCRA_cn,TCRB_cn,TCRG_cn,IGH_cn
-SAMPLE_A,s3://my-bucket/data/SAMPLE_A_tumor.bam,hg38,0.5,3,3,3,3
-SAMPLE_B,s3://my-bucket/data/SAMPLE_B_tumor.bam,hg38,0.6,2,2,NA,2
+sample,bam,normal_bam,genome,purity,TCRA_cn,TCRB_cn,TCRG_cn,IGH_cn
+SAMPLE_A,s3://my-bucket/data/SAMPLE_A_tumor.bam,s3://my-bucket/data/SAMPLE_A_normal.bam,hg38,0.5,3,3,3,3
+SAMPLE_B,s3://my-bucket/data/SAMPLE_B_tumor.bam,,hg38,0.6,2,2,NA,2
 ```
 
 `purity` is a fraction within [0,1]. Each `*_cn` is absolute tumour copy
@@ -105,22 +110,34 @@ no arbitrary average is used. The helper validates the hg38 gene annotation.
 5. Match upstream `getCovFromBam_WGS`: `samtools depth -q 20 -Q 20`, omitting
    uncovered positions. Use upstream model defaults, GC correction and flagged
    exon removal, including the default median coverage threshold of 15.
-6. Export fractions, locus-specific segment usage, model fit, Shannon diversity
+6. If a matched normal is supplied, extract its IGH coverage only. Use upstream
+   `IGH_haplotype_norm_fun` and `IGH_haplotype_norm_fun_tumour` to infer germline
+   CNV and paired somatic CNA corrections. Fit germline-only and eligible combined
+   coverage. Following Supplementary Methods, select combined correction only if
+   upstream somatic QC passes and its B fraction is lower than germline-only.
+   This caller assumes a germline sample with low B-cell content (<10%); the
+   wrapper does not infer the normal specimen type. A normal median covered-position
+   depth <=10 skips locus correction; tumour depth <=20 skips selection of somatic
+   correction. These are local depth safeguards motivated by the publication,
+   rather than measurements of whole-genome sequencing depth. Missing normal,
+   low depth and nonfinite corrected fits have explicit correction states.
+7. Export fractions, locus-specific segment usage, model fit, Shannon diversity
    and IGH class-switch metrics as provided by the upstream model.
    When correction columns are supplied, apply upstream `adjustImmuneLENS`
    to the summary, segment and model tables. Both raw and adjusted fractions
    are exported. Fractions exceeding [0,1] or the non-tumour fraction
    (`1-purity`) receive explicit QC status and are not clipped.
-7. Gather exactly four locus records for every manifest sample. Missing or
+8. Gather exactly four locus records for every manifest sample. Missing or
    duplicate records fail the gather step. Low-coverage/no-estimate records are
    retained with `NA` fractions and explicit status; unexpected model failures
    fail the task rather than being silently converted into missing data.
 
 The two-column manifest produces **unadjusted DNA-based estimates**.
-The enriched manifest supplies purity and local CN for adjustment. Neither
-format supplies matched-normal coverage for IGH germline/within-locus somatic
-haplotype correction. Tumour-only IGH estimates and class-switch metrics
-require particular caution at this polymorphic, copy-number-sensitive locus.
+The enriched manifest supplies purity and local CN for adjustment, and can
+include `normal_bam` for IGH germline/within-locus somatic correction. This
+locus correction precedes purity/local-CN adjustment and applies to IGH model
+outputs, including class switching. Tumour-only IGH estimates remain available
+with `igh_correction=not_provided`, without claiming locus CNV correction.
 The three T-cell locus estimates are kept separate; no arbitrary consensus
 fraction or immune hot/cold label is created. These estimates do not measure
 immune function or spatial localization.
@@ -136,11 +153,15 @@ immune function or spatial localization.
   coverage/<sample>.coverage/
     TCRA.txt.gz, TCRB.txt.gz, TCRG.txt.gz, IGH.txt.gz
     bam_header.sam, sample.json
+  coverage/<sample>.normal.coverage/
+    IGH.txt.gz, bam_header.sam, sample.json  # when normal supplied
   samples/<sample>.immunelens/
     estimates.tsv, upstream_summaries.tsv
     <locus>.rds, <locus>.segments.tsv, <locus>.model.tsv
     <locus>.raw.rds             # original model when adjustment is applied
-    sample.json, corrections.json, sessionInfo.txt
+    IGH.uncorrected.rds, IGH.germline.rds, IGH.germline_somatic.rds
+    IGH.germline_regions.tsv, IGH.somatic_regions.tsv, IGH.correction.json
+    sample.json, normal.json, corrections.json, sessionInfo.txt
   pipeline_info/
     software_versions.txt, report.html, timeline.html, trace.tsv
 ```
@@ -152,6 +173,11 @@ are present, otherwise the raw estimate. `raw_cell_fraction` and
 `adjusted_cell_fraction` are kept separately; inspect each locus's
 `correction`, `cn_status` and `high_cell_fraction_flag`. The wide table has
 matching per-locus columns and the cohort QC JSON records correction counts.
+For IGH, `raw_cell_fraction` is the selected locus-corrected fit before
+purity adjustment. `igh_uncorrected_fraction`, `igh_germline_fraction` and
+`igh_combined_fraction` preserve the separate candidates before purity
+adjustment. `igh_correction`, `igh_somatic_qc` and `igh_somatic_selected`
+record the decision. Candidate files exist only when that candidate was fitted.
 An execution success can include biological QC failures: inspect
 `cohort_qc.json` and locus statuses before downstream analysis.
 

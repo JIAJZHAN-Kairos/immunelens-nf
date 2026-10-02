@@ -22,7 +22,7 @@ def run(command, **kwargs):
     return result
 
 
-def bam_source(bam):
+def bam_source(bam, index_prefix='input'):
     if bam.startswith('s3://'):
         parsed = urlparse(bam)
         key = parsed.path.lstrip('/')
@@ -35,7 +35,7 @@ def bam_source(bam):
                 break
         if index is None:
             raise RuntimeError(f'No accessible BAI/CSI index for {bam}; an index is required.')
-        local_index = Path('input' + Path(index).suffix)
+        local_index = Path(index_prefix + Path(index).suffix)
         run(['aws', 's3', 'cp', index, str(local_index), '--only-show-errors'], stdout=subprocess.PIPE)
         url = run(['aws', 's3', 'presign', bam, '--expires-in', '43200'], stdout=subprocess.PIPE)
         return url.stdout.decode().strip(), local_index, index
@@ -69,8 +69,9 @@ def main():
     parser.add_argument('--bam', required=True)
     parser.add_argument('--original-bam', help='Original manifest path retained in provenance after local staging.')
     parser.add_argument('--regions', required=True)
+    parser.add_argument('--locus', choices=['IGH'], help='Extract only the matched-normal IGH locus.')
     args = parser.parse_args()
-    source, index, index_uri = bam_source(args.bam)
+    source, index, index_uri = bam_source(args.bam, args.sample)
     header = run(['samtools', 'view', '-H', source], stdout=subprocess.PIPE).stdout.decode()
     genome, prefix = detect_genome(header)
     output = Path(args.sample + '.coverage')
@@ -82,6 +83,8 @@ def main():
     expected = {'TCRA', 'TCRB', 'TCRG', 'IGH'} if genome == 'hg38' else {'TCRA', 'TCRB', 'TCRG'}
     if {row['locus'] for row in regions} != expected:
         raise RuntimeError('The ImmuneLENS region table is incomplete.')
+    if args.locus:
+        regions = [row for row in regions if row['locus'] == args.locus]
     for row in regions:
         region = f"{prefix}{row['chromosome']}:{row['start']}-{row['end']}"
         command = ['samtools', 'depth', '-q', '20', '-Q', '20', '-r', region,
@@ -99,6 +102,7 @@ def main():
         print(f'{args.sample}: {genome} {row["locus"]}, {count} covered positions', flush=True)
     (output / 'sample.json').write_text(json.dumps({
         'sample': args.sample, 'bam': args.original_bam or args.bam, 'bam_index': index_uri,
+        'provided': True,
         'genome': genome, 'coverage_positions': counts,
         'base_quality': 20, 'mapping_quality': 20,
         'zero_coverage_positions': 'omitted, matching upstream getCovFromBam_WGS',

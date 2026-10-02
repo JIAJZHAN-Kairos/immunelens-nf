@@ -28,7 +28,11 @@ def summarise(manifest, results):
     for row in rows:
         for field, value in {'raw_cell_fraction': row['cell_fraction'],
                              'adjusted_cell_fraction': 'NA', 'purity': 'NA', 'local_cn': 'NA',
-                             'cn_status': 'not_supplied', 'high_cell_fraction_flag': 'NA'}.items():
+                             'cn_status': 'not_supplied', 'high_cell_fraction_flag': 'NA',
+                             'igh_correction': 'not_provided' if row['locus'] == 'IGH' else 'not_applicable',
+                             'igh_uncorrected_fraction': 'NA', 'igh_germline_fraction': 'NA',
+                             'igh_combined_fraction': 'NA', 'igh_somatic_qc': 'NA',
+                             'igh_somatic_selected': 'NA'}.items():
             row.setdefault(field, value)
     with open('cohort_estimates.tsv', 'w', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]), delimiter='\t')
@@ -36,6 +40,9 @@ def summarise(manifest, results):
         writer.writerows(rows)
     with open('cohort_estimates_wide.tsv', 'w', newline='') as handle:
         fields = ['sample', 'genome', 'purity', 'correction']
+        igh_fields = ['igh_correction', 'igh_uncorrected_fraction', 'igh_germline_fraction',
+                      'igh_combined_fraction', 'igh_somatic_qc', 'igh_somatic_selected']
+        fields += igh_fields
         for locus in loci:
             fields += [locus + suffix for suffix in ('_fraction', '_raw_fraction', '_adjusted_fraction',
                        '_status', '_correction', '_local_cn', '_cn_status', '_high_cell_fraction_flag')]
@@ -46,6 +53,7 @@ def summarise(manifest, results):
             row = {'sample': sample, 'genome': gathered[(sample, 'TCRA')]['genome'],
                    'purity': gathered[(sample, 'TCRA')]['purity'],
                    'correction': next(iter(corrections)) if len(corrections) == 1 else 'mixed'}
+            row.update({field: gathered[(sample, 'IGH')][field] for field in igh_fields})
             for locus in loci:
                 result = gathered[(sample, locus)]
                 row[locus + '_fraction'] = result['cell_fraction']
@@ -66,7 +74,8 @@ def summarise(manifest, results):
           'correction_counts': correction_counts,
           'high_cell_fraction_flags': sum(row['high_cell_fraction_flag'] == 'TRUE' for row in rows),
           'stub_run': any(row['status'] == 'stub' for row in rows),
-          'note': 'cell_fraction uses purity/local-CN adjustment where supplied; raw and adjusted values are retained separately. IGH matched-normal correction is not supplied.'}
+          'igh_correction_counts': dict(collections.Counter(gathered[(sample, 'IGH')]['igh_correction'] for sample in samples)),
+          'note': 'cell_fraction uses purity/local-CN adjustment where supplied. IGH raw_cell_fraction is after the selected locus CNV correction and before purity adjustment; uncorrected and candidate IGH fractions are separate. Inspect IGH correction state and QC.'}
     Path('cohort_qc.json').write_text(json.dumps(qc, indent=2) + '\n')
     shutil.copyfile(manifest, 'samplesheet.csv')
     print(json.dumps(qc, indent=2))

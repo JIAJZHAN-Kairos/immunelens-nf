@@ -1,5 +1,6 @@
 """Make two tiny, indexed hg38 BAMs for a real end-to-end QC smoke run."""
 import csv
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -21,6 +22,11 @@ for sample in ('EMPTY', 'LOWCOV'):
     bam = output / (sample + '.bam')
     subprocess.run(['samtools', 'view', '-b', '-o', str(bam), str(sam)], check=True)
     subprocess.run(['samtools', 'index', str(bam)], check=True)
-(output / 'samplesheet.csv').write_text('sample,bam,genome,purity,TCRA_cn,TCRB_cn,TCRG_cn,IGH_cn\n' +
-    ''.join(f'{s},{output / (s + ".bam")},hg38,0.5,3,3,{"NA" if s == "LOWCOV" else 3},3\n'
+(output / 'normal').mkdir(exist_ok=True)
+normal = output / 'normal/LOWCOV.bam'
+# Same basename as tumour, to check staging isolation; empty normal is a QC case.
+shutil.copyfile(output / 'EMPTY.bam', normal)
+shutil.copyfile(output / 'EMPTY.bam.bai', str(normal) + '.bai')
+(output / 'samplesheet.csv').write_text('sample,bam,normal_bam,genome,purity,TCRA_cn,TCRB_cn,TCRG_cn,IGH_cn\n' +
+    ''.join(f'{s},{output / (s + ".bam")},{normal if s == "LOWCOV" else ""},hg38,0.5,3,3,{"NA" if s == "LOWCOV" else 3},3\n'
             for s in ('EMPTY', 'LOWCOV')))

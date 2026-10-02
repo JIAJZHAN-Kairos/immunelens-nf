@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema",
   "$id": "https://raw.githubusercontent.com/JIAJZHAN-Kairos/immunelens-nf/main/nextflow_schema.json",
   "title": "ImmuneLENS Nextflow parameters",
-  "description": "One CSV manifest supplies BAMs and optional purity/local-CN correction values.",
+  "description": "One CSV manifest supplies tumour BAMs, optional matched normal BAMs, and purity/local-CN correction values.",
   "type": "object",
   "properties": {
     "input": {
@@ -11,7 +11,7 @@
       "mimetype": "text/csv",
       "pattern": "^.+\\.csv$",
       "title": "Input manifest",
-      "description": "CSV with sample,bam and optional purity,genome,TCRA_cn,TCRB_cn,TCRG_cn,IGH_cn columns. A local path or s3:// URI is accepted."
+      "description": "CSV with sample,bam and optional normal_bam,purity,genome,TCRA_cn,TCRB_cn,TCRG_cn,IGH_cn columns. A local path or s3:// URI is accepted."
     },
     "outdir": {
       "type": "string",

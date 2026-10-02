@@ -4,6 +4,23 @@ def quoteArg(value) {
     return "'" + value.toString().replace("'", "'\"'\"'") + "'"
 }
 
+def parseBam(sample, bam) {
+    if (!bam || !bam.toLowerCase().endsWith('.bam') || bam.contains('\n') || bam.contains('\r')) {
+        error "Sample ${sample}: BAM must be a BAM path or s3:// URI."
+    }
+    if (bam.startsWith('s3://')) {
+        if (!(bam ==~ /s3:\/\/[^\/]+\/.+/)) error "Sample ${sample}: invalid S3 BAM URI."
+        return [bam, []]
+    }
+    if (bam.contains('://')) error "Sample ${sample}: only local BAMs and s3:// BAMs are supported."
+    bam = file(bam, checkIfExists: !workflow.stubRun).toAbsolutePath().toString()
+    def candidates = [bam + '.bai', bam.replaceFirst(/\.bam$/, '.bai'),
+                      bam + '.csi', bam.replaceFirst(/\.bam$/, '.csi')]
+    def index = candidates.find { file(it).exists() }
+    if (!index) error "Sample ${sample}: a local BAI/CSI index is required."
+    return [bam, [file(bam), file(index)]]
+}
+
 process PREPARE_IMMUNELENS {
     publishDir "${params.outdir}/pipeline_info", mode: 'copy', pattern: 'software_versions.txt'
 
@@ -33,22 +50,28 @@ process EXTRACT_COVERAGE {
     publishDir "${params.outdir}/coverage", mode: 'copy'
 
     input:
-    tuple val(sample), val(bam), path(local_inputs), val(corrections)
+    tuple val(sample), val(bam), path(local_inputs), val(normal_bam), path(normal_inputs, stageAs: 'normal/*'), val(corrections)
     path regions
 
     output:
-    tuple val(sample), path("${sample}.coverage"), val(corrections)
+    tuple val(sample), path("${sample}.coverage"), path("${sample}.normal.coverage"), val(corrections)
 
     script:
     def source = local_inputs ? local_inputs.find { it.name.endsWith('.bam') }.toString() : bam
+    def normal_source = normal_inputs ? normal_inputs.find { it.name.endsWith('.bam') }.toString() : normal_bam
+    def normal_command = normal_bam ? "extract_coverage.py --sample ${quoteArg(sample + '.normal')} --bam ${quoteArg(normal_source)} --original-bam ${quoteArg(normal_bam)} --regions ${quoteArg(regions)} --locus IGH" :
+        "mkdir ${quoteArg(sample + '.normal.coverage')}; printf '{\"provided\":false}\\n' > ${quoteArg(sample + '.normal.coverage/sample.json')}"
     """
     extract_coverage.py --sample ${quoteArg(sample)} --bam ${quoteArg(source)} --original-bam ${quoteArg(bam)} --regions ${quoteArg(regions)}
+    ${normal_command}
     """
 
     stub:
     """
     mkdir ${quoteArg(sample + '.coverage')}
     printf '{"genome":"hg38","stub":true}\n' > ${quoteArg(sample + '.coverage/sample.json')}
+    mkdir ${quoteArg(sample + '.normal.coverage')}
+    printf '{"provided":${normal_bam ? 'true' : 'false'},"genome":"hg38","stub":true}\n' > ${quoteArg(sample + '.normal.coverage/sample.json')}
     """
 }
 
@@ -57,7 +80,7 @@ process FIT_IMMUNELENS {
     publishDir "${params.outdir}/samples", mode: 'copy'
 
     input:
-    tuple val(sample), path(coverage), val(corrections)
+    tuple val(sample), path(coverage), path(normal_coverage), val(corrections)
     path library
 
     output:
@@ -70,7 +93,7 @@ process FIT_IMMUNELENS {
     cat > corrections.json <<'IMMUNELENS_CORRECTIONS'
     ${groovy.json.JsonOutput.toJson(corrections)}
     IMMUNELENS_CORRECTIONS
-    run_immunelens.R ${quoteArg(sample)} ${quoteArg(coverage)} corrections.json
+    run_immunelens.R ${quoteArg(sample)} ${quoteArg(coverage)} corrections.json ${quoteArg(normal_coverage)}
     """
 
     stub:
@@ -127,21 +150,16 @@ workflow {
                 if (!sample || !(sample ==~ /[A-Za-z0-9][A-Za-z0-9_.-]*/)) {
                     error "Invalid sample ID: ${sample}. Use letters, digits, underscore, hyphen or dot."
                 }
-                if (!bam || !bam.toLowerCase().endsWith('.bam') || bam.contains('\n') || bam.contains('\r')) {
-                    error "Sample ${sample}: bam must be a BAM path or s3:// URI."
-                }
-                if (bam.startsWith('s3://') && !(bam ==~ /s3:\/\/[^\/]+\/.+/)) {
-                    error "Sample ${sample}: invalid S3 BAM URI."
-                }
-                def local_inputs = []
-                if (!bam.startsWith('s3://')) {
-                    if (bam.contains('://')) error "Sample ${sample}: only local BAMs and s3:// BAMs are supported."
-                    bam = file(bam, checkIfExists: !workflow.stubRun).toAbsolutePath().toString()
-                    def candidates = [bam + '.bai', bam.replaceFirst(/\.bam$/, '.bai'),
-                                      bam + '.csi', bam.replaceFirst(/\.bam$/, '.csi')]
-                    def index = candidates.find { file(it).exists() }
-                    if (!index) error "Sample ${sample}: a local BAI/CSI index is required."
-                    local_inputs = [file(bam), file(index)]
+                def (tumor_bam, local_inputs) = parseBam(sample, bam)
+                bam = tumor_bam
+                def normal_bam = row.normal_bam?.trim()
+                if (normal_bam == 'NA') normal_bam = ''
+                def normal_inputs = []
+                if (normal_bam) {
+                    def parsed = parseBam(sample + ' normal', normal_bam)
+                    normal_bam = parsed[0]
+                    normal_inputs = parsed[1]
+                    if (normal_bam == bam) error "Sample ${sample}: normal_bam cannot equal tumour bam."
                 }
                 if (!names.add(sample)) error "Duplicate sample ID: ${sample}."
                 if (!bams.add(bam)) error "Duplicate BAM path for sample ${sample}."
@@ -170,7 +188,7 @@ workflow {
                     }
                     cnColumns.each { column -> corrections[column + '_status'] = row[column + '_status'] ?: 'user_supplied' }
                 }
-                tuple(sample, bam, local_inputs, corrections)
+                tuple(sample, bam, local_inputs, normal_bam ?: '', normal_inputs, corrections)
             }
         }
         PREPARE_IMMUNELENS(samples.map { it.size() })

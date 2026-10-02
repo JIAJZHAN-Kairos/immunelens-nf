@@ -77,4 +77,7 @@ jobs:
               rows = list(csv.DictReader(handle, delimiter='\t'))
           assert all(row['status'] == 'no_coverage' for row in rows if row['sample'] == 'EMPTY')
           assert all(row['cell_fraction'] == 'NA' for row in rows)
+          assert json.loads(Path('test-results/coverage/LOWCOV.normal.coverage/sample.json').read_text())['coverage_positions'] == {'IGH': 0}
+          assert json.loads(Path('test-results/coverage/EMPTY.normal.coverage/sample.json').read_text())['provided'] is False
+          assert qc['igh_correction_counts'] == {'not_provided': 1, 'not_run': 1}
           PY
