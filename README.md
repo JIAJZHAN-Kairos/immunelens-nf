@@ -7,7 +7,7 @@ Seqera Platform with AWS Batch; local execution with Docker is also supported.
 ## Seqera launch
 
 1. Add pipeline: `https://github.com/JIAJZHAN-Kairos/immunelens-nf`.
-2. Select revision `v1.2.1` and profile `seqera`.
+2. Select revision `v1.2.2` and profile `seqera`.
 3. Select an existing Linux x86-64 AWS Batch compute environment with access to the BAM
    bucket and the manifest/output bucket. Its configuration supplies the queue,
    executor, work directory and AWS job role.
@@ -41,6 +41,10 @@ ordinary S3 transfers for task inputs and outputs. BAMs are queried over HTTPS
 after downloading their indexes, without a Fusion mount. The image hostname
 `community.wave.seqera.io` is a public container registry; pulling this frozen
 image does not require enabling Wave or Fusion in Seqera.
+
+AWS Batch jobs allow up to five attempts when an EC2 host is terminated
+(`Host EC2*`). This handles infrastructure interruptions without retrying
+ordinary analysis errors. Resume a stopped run to reuse its cached coverage.
 
 ## Manifest
 
