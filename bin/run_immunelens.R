@@ -46,17 +46,14 @@ for (locus in c('TCRA', 'TCRB', 'TCRG', 'IGH')) {
         note <- 'No positions meet base-quality 20 and mapping-quality 20.'
     } else {
         coverage <- suppressMessages(loadCov(file.path(coverage_dir, paste0(locus, '.txt.gz'))))
-        fit <- tryCatch(
-            runImmuneLENS(coverage, vdj.gene = locus, hg19_or_38 = metadata$genome,
-                GC_correct = TRUE, removed_flag = TRUE, sample_name = sample),
+        model <- tryCatch(
+            fit_with_coverage_qc(coverage, locus, metadata$genome, sample),
             error = function(error) {
-                if (grepl('All positions have been removed due to low coverage', conditionMessage(error), fixed = TRUE)) {
-                    status <<- 'insufficient_coverage'
-                    note <<- conditionMessage(error)
-                    return(NULL)
-                }
                 stop(paste(sample, locus, conditionMessage(error)), call. = FALSE)
             })
+        fit <- model$fit
+        status <- model$status
+        note <- model$note
         if (status == 'ok') {
             column <- paste0(locus, if (locus == 'IGH') '.bcell.fraction' else '.tcell.fraction')
             if (!is.list(fit) || length(fit) != 3L || !is.data.frame(fit[[1]]) ||

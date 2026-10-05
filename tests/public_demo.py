@@ -9,6 +9,7 @@ import sys
 import urllib.request
 import csv
 import math
+import shutil
 
 root = Path(__file__).resolve().parents[1]
 destination = Path(sys.argv[1]).resolve()
@@ -80,6 +81,26 @@ assert (destination / 'DEMO.immunelens/IGH.germline_regions.tsv').is_file()
 assert (destination / 'DEMO.immunelens/IGH.somatic_regions.tsv').is_file()
 subprocess.run(['Rscript', str(root / 'tests/igh_correction_qc.R'), str(root / 'bin/correct_igh.R'), str(destination)],
                cwd=destination, check=True)
+# A real IGHM coverage gap must retain all three valid TCR estimates and an NA IGH row.
+gap_coverage = destination / 'CS_GAP.coverage'
+shutil.copytree(coverage, gap_coverage)
+subprocess.run(['Rscript', str(root / 'tests/igh_class_switch_qc.R'), str(root / 'bin/correct_igh.R'),
+                str(coverage), str(gap_coverage)], cwd=destination, check=True)
+subprocess.run([str(root / 'bin/run_immunelens.R'), 'CS_GAP', str(gap_coverage), str(corrections), str(normal)],
+               cwd=destination, check=True)
+with (destination / 'CS_GAP.immunelens/estimates.tsv').open() as handle:
+    gap_rows = list(csv.DictReader(handle, delimiter='\t'))
+assert len(gap_rows) == 4
+for baseline, changed in zip(rows, gap_rows):
+    assert baseline['locus'] == changed['locus']
+    if changed['locus'] == 'IGH':
+        assert changed['status'] == 'insufficient_class_switch_coverage', changed
+        assert changed['igh_correction'] == 'not_run'
+        assert all(changed[field] == 'NA' for field in
+                   ('cell_fraction', 'raw_cell_fraction', 'adjusted_cell_fraction'))
+    else:
+        assert all(changed[field] == baseline[field] for field in
+                   ('status', 'cell_fraction', 'raw_cell_fraction', 'adjusted_cell_fraction'))
 # A supplied mismatched genome must fail before fitting any models.
 bad_normal = destination / 'bad.normal.coverage'
 bad_normal.mkdir(exist_ok=True)

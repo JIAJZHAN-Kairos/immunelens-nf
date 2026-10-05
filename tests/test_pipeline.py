@@ -130,6 +130,10 @@ class CoverageTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('Rscript'), 'Rscript required for correction selection test')
 class IGHSelectionTests(unittest.TestCase):
+    def test_known_igh_coverage_failure_and_unexpected_errors(self):
+        subprocess.run(['Rscript', str(ROOT / 'tests/coverage_qc.R'),
+                        str(ROOT / 'bin/correct_igh.R')], check=True)
+
     def test_combined_requires_qc_and_strictly_lower_fraction(self):
         source = json.dumps(str(ROOT / 'bin/correct_igh.R'))
         subprocess.run(['Rscript', '-e', f'''source({source})

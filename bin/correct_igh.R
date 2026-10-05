@@ -1,4 +1,29 @@
-# Matched-normal IGH correction using the pinned upstream implementation.
+# Coverage QC and matched-normal IGH correction using the pinned upstream implementation.
+fit_with_coverage_qc <- function(coverage, locus, genome, sample) {
+    tryCatch({
+        fit <- withCallingHandlers(
+            runImmuneLENS(coverage, vdj.gene = locus, hg19_or_38 = genome,
+                GC_correct = TRUE, removed_flag = TRUE, sample_name = sample),
+            warning = function(warning) {
+                if (locus == 'IGH' && identical(conditionMessage(warning),
+                    'Not enough bases with coverage in IGH class switch region')) {
+                    # Upstream returns NULL constraints here, then lavaan fails parsing them.
+                    stop(structure(list(message = conditionMessage(warning), call = NULL),
+                        class = c('igh_coverage_error', 'error', 'condition')))
+                }
+            })
+        list(fit = fit, status = 'ok', note = '')
+    }, igh_coverage_error = function(error) {
+        list(fit = NULL, status = 'insufficient_class_switch_coverage', note = conditionMessage(error))
+    }, error = function(error) {
+        if (grepl('All positions have been removed due to low coverage',
+            conditionMessage(error), fixed = TRUE)) {
+            return(list(fit = NULL, status = 'insufficient_coverage', note = conditionMessage(error)))
+        }
+        stop(error)
+    })
+}
+
 igh_fraction <- function(fit) {
     if (!is.list(fit) || length(fit) != 3L || !is.data.frame(fit[[1]]) ||
         nrow(fit[[1]]) != 1L || !'IGH.bcell.fraction' %in% names(fit[[1]])) return(NA_real_)
@@ -6,13 +31,9 @@ igh_fraction <- function(fit) {
 }
 
 fit_igh <- function(coverage, sample) {
-    tryCatch(runImmuneLENS(coverage, vdj.gene = 'IGH', hg19_or_38 = 'hg38',
-        GC_correct = TRUE, removed_flag = TRUE, sample_name = sample),
-        error = function(error) {
-            if (grepl('All positions have been removed due to low coverage',
-                conditionMessage(error), fixed = TRUE)) return(NULL)
-            stop(error)
-        })
+    result <- fit_with_coverage_qc(coverage, 'IGH', 'hg38', sample)
+    if (result$status != 'ok') message(sample, ' corrected IGH: ', result$status)
+    result$fit
 }
 
 select_igh_correction <- function(germline_fraction, combined_fraction, somatic_qc) {

@@ -7,7 +7,7 @@ Seqera Platform with AWS Batch; local execution with Docker is also supported.
 ## Seqera launch
 
 1. Add pipeline: `https://github.com/JIAJZHAN-Kairos/immunelens-nf`.
-2. Select revision `v1.2.0` and profile `seqera`.
+2. Select revision `v1.2.1` and profile `seqera`.
 3. Select an existing Linux x86-64 AWS Batch compute environment with access to the BAM
    bucket and the manifest/output bucket. Its configuration supplies the queue,
    executor, work directory and AWS job role.
@@ -129,7 +129,9 @@ no arbitrary average is used. The helper validates the hg38 gene annotation.
    (`1-purity`) receive explicit QC status and are not clipped.
 8. Gather exactly four locus records for every manifest sample. Missing or
    duplicate records fail the gather step. Low-coverage/no-estimate records are
-   retained with `NA` fractions and explicit status; unexpected model failures
+   retained with `NA` fractions and explicit status. Insufficient IGH class-switch
+   coverage is recorded as `insufficient_class_switch_coverage`, preserving the
+   sample's TCR results; unexpected model failures
    fail the task rather than being silently converted into missing data.
 
 The two-column manifest produces **unadjusted DNA-based estimates**.
