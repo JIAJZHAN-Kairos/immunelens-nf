@@ -2,7 +2,9 @@ suppressPackageStartupMessages(library(ImmuneLENS))
 args <- commandArgs(trailingOnly = TRUE)
 source(args[[1]])
 coverage <- loadCov(file.path(args[[2]], 'IGH.txt.gz'))
-segments <- get('vdj_seg_list', asNamespace('ImmuneLENS'))$IGH_hg38
+segments <- get('calculateSegmentRanges', asNamespace('ImmuneLENS'))(
+    'IGH', 'hg38', NULL, c('IGHA2', 'IGHE', 'IGHG4', 'IGHG2', 'IGHA1',
+        'IGHG1', 'IGHG3', 'IGHM'))[[1]]
 ighm <- segments[segments$segName == 'IGHM', ]
 stopifnot(nrow(ighm) == 1L)
 gap <- coverage[!(coverage$pos >= ighm$start & coverage$pos <= ighm$end), ]
